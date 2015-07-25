@@ -1,0 +1,139 @@
+---
+title: "Machine Learning Course Project"
+author: "Toucan15"
+date: "July 23, 2015"
+output: html_document
+---
+
+##Introduction
+This project uses data from an experiment on activity pattern recognition. Six subjects, each wearing four sensors (forearm, arm, belt, and dumbell), completed dumbell biceps curls in five different ways. Type A was the correct method and types B, C, D, and E were incorrect in slightly different ways. Each sensor recorded 13 variables during the exercises (see list below). 
+
+The goal of this project is to devise a machine learning algorithm that can predict the method of the exercise (A, B, C, D, or E). This could be used to develop a trainer program that could provide feedback to a person exercising to improve their technique. The steps used in the algorithm are shown below. 
+
+```{r}
+##read in the data
+data3 <- read.csv("pml-training.csv", na.strings=c(""," ","NA"))
+```
+
+```{r}
+##check for missing values
+colSums(is.na(data3))
+```
+
+Variables are either all present or all NA. The variables that are all NA are those that are summaries of the raw data (average, sd, etc).
+
+```{r}
+##remove all NA variables
+data3 <- data3[, colSums(is.na(data3)) < 1]
+```
+
+Look at structure of remaining variables
+```{r}
+str(data3)
+```
+
+The first seven columns don't appear to be useful for the purpose of characterizing the quality of the activity. The procedures for the activities do not have a time component and including the participant as a variable may actually bias the prediction if certain people do the activities in peculiar ways. Removing these results in a dataset comprised of 52 variables from the 4 sensors each recording 13 features, plus the activity method variables (classe).
+```{r}
+##remove first seven columns
+data3 <- data3[,8:60]
+```
+
+## preparing the data for analysis
+```{r, results='hide', message=FALSE}
+library(caret)
+library(gbm)
+library(plyr)
+set.seed(815)
+```
+
+```{r}
+##partition the data into training and test sets
+data3part <-createDataPartition(y=data3$classe, p=.6, list=FALSE)
+traindata <- data3[data3part,]
+testdata <- data3[-data3part,]
+```
+
+
+```{r}
+##Further split of training data into 2 sets for cross validation
+data3part2 <-createDataPartition(y=traindata$classe, p=.5, list=FALSE)
+traindata1 <- traindata[data3part2,]
+traindata2 <- traindata[-data3part2,]
+```
+
+
+```{r}
+##this section removes highly correlated variables to
+##limit potential problems with multicolinearity
+descrCorr <- cor(traindata1[,1:52])
+highCorr <- findCorrelation(descrCorr, 0.90)
+traindata1 <- traindata1[, -highCorr]
+##then remove same varibales from second training set and test set
+traindata2 <- traindata2[, -highCorr]
+testdata <- testdata[, -highCorr]
+dim(traindata1)
+dim(traindata2)
+dim(testdata)
+```
+
+##Exploratory plots
+```{r, cache=TRUE}
+qplot(roll_forearm, pitch_forearm, color=classe, data=traindata1)
+qplot(magnet_dumbbell_y, magnet_dumbbell_z, color=classe, data=traindata1)
+```
+
+These plots show patterns among the 5 classes but not straigtforward linear patterns. Thus, regression models will probably not be useful for prediction. Instead I tried random forest and boosting models. Both worked well but the gbm boosting model did slightly better
+
+##The Model
+```{r, cache=TRUE}
+
+gbmGrid2 <- expand.grid(interaction.depth = (1:5)*2, 
+                       n.trees = (1:4)*50, 
+                       shrinkage = .1,
+                       n.minobsinnode = 20)
+gbmfit2 <- train(classe~., data = traindata1, method = "gbm", 
+                trControl = trainControl(method = "cv", number = 5), 
+                verbose = FALSE, 
+                bag.fraction = 0.5, tuneGrid = gbmGrid2)
+```
+
+The expand.grid function allows tuning of the training function to run the code faster. The interaction depth term allows depths up to 10 in steps of 2 rather than all of 1 through 10. The n.trees terms similarly allows trees up to 200 in steps of 50. Shrinkage and minimum number of observations to define a node (n.minobsinnode) were kept constant. In the train function setting trControl to 5 repetitions of cross validation also helps speed the code.
+
+##in sample error
+```{r}
+gbmfit2
+```
+The best model had interaction depth of 10 with 200 trees and had an accuracy of 97.88%
+
+##cross validation
+```{r}
+##apply model to second training set
+predgbm <- predict(gbmfit2, traindata2)
+confusionMatrix(predgbm, traindata2$classe)
+```
+
+Applying the model to the second training set (cross validation) also has an accuracy of 98.88% with similar accuracy across the categories for the classe variable.
+
+##confusion matrix (out-of-sample error)
+```{r}
+##apply model to test set 
+testpredgbm <- predict(gbmfit2, testdata)
+confusionMatrix(testpredgbm, testdata$classe)
+```
+
+Applying the model to the test set has similarly high accuracy (98.75%) but slightly lower that for the training set (as expected). 
+
+```{r}
+varImp(gbmfit2)
+```
+
+#Conclusions
+The high accuracy is a bit surprising but reflects the controlled conditions underwhich the data were collected. During the original experiment the participants were carefully instructed how to do the exercises correctly and incorrectly. If the experiment were repeated by having random participants do the exercises without such close supervision, the accuracy would most likely be much lower because the variation among the particiants would be much greater. Nevertheless, this model is a good starting point for the development of such training apps. 
+
+##References
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
